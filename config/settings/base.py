@@ -13,12 +13,11 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 import os
 from datetime import timedelta
 from pathlib import Path
-from config.conf import smtp_email_settings, console_email_settings
 
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -43,9 +42,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "rest_framework_simplejwt.token_blacklist",
     "rest_framework",
     "users",
-    "rest_framework_simplejwt.token_blacklist",
 ]
 
 AUTH_USER_MODEL = "users.User"
@@ -156,8 +155,24 @@ STATIC_URL = "static/"
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
 if os.environ.get("EMAIL_HOST"):
-    MAILERS = smtp_email_settings.get_smtp_email_settings()
+    MAILERS = {
+        "default": {
+            "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+            "OPTIONS": {
+                "host": os.environ["EMAIL_HOST"],
+                "port": int(os.environ.get("EMAIL_PORT", "587")),
+                "use_tls": os.environ.get("EMAIL_USE_TLS", "True") == "True",
+                "username": os.environ.get("EMAIL_HOST_USER", ""),
+                "password": os.environ.get("EMAIL_HOST_PASSWORD", ""),
+                "timeout": 10,
+            },
+        },
+    }
 else:
-    MAILERS = console_email_settings.get_console_email_settings()
+    MAILERS = {
+        "default": {
+            "BACKEND": "django.core.mail.backends.console.EmailBackend",
+        },
+    }
 
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "noreply@example.com")
