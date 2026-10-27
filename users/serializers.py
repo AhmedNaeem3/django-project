@@ -40,7 +40,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         user = User.objects.create_user(**validated_data)
-
+        Profile.objects.create(
+            user=user,
+        )
         transaction.on_commit(
             lambda: send_welcome_email.delay(user.email, user.first_name), robust=True
         )
@@ -74,7 +76,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
 
     def validate_date_of_birth(self, value):
         if value and value > date.today():

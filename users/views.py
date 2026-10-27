@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.core.cache import cache
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
-from rest_framework.generics import CreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -90,41 +90,42 @@ class LogoutAPIView(APIView):
         )
 
 
-class ProfileAPIView(CreateAPIView, RetrieveUpdateDestroyAPIView):
-    serializer_class = ProfileSerializer
+class ProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get_object(self):
+    def get_object(self, request):
         try:
-            return self.request.user.profile
+            return request.user.profile
         except Profile.DoesNotExist:
             raise NotFound({"error": "Profile not found."})
 
-    def get_cache_key(self):
-        return f"profile:{self.request.user.pk}"
+    def get(self, request):
+        profile = self.get_object(request)
+        serializer = ProfileSerializer(profile)
+        return Response(serializer.data)
 
-    def retrieve(self, request, *args, **kwargs):
-        cache_key = self.get_cache_key()
-        cached_data = cache.get(cache_key)
-
-        if cached_data is not None:
-            return Response(cached_data)
-
-        response = super().retrieve(request, *args, **kwargs)
-        cache.set(cache_key, response.data, timeout=60)
-        return response
-
-    def perform_create(self, serializer):
-        if Profile.objects.filter(user=self.request.user).exists():
-            raise ValidationError({"error": "You already have a profile."})
-
-        serializer.save(user=self.request.user)
-        cache.delete(self.get_cache_key())
-
-    def perform_update(self, serializer):
+    def put(self, request):
+        profile = self.get_object(request)
+        serializer = ProfileSerializer(profile, data=request.data)
+        serializer.is_valid(raise_exception=True)
         serializer.save()
-        cache.delete(self.get_cache_key())
 
-    def perform_destroy(self, instance):
-        instance.delete()
-        cache.delete(self.get_cache_key())
+        return Response(serializer.data)
+
+    def patch(self, request):
+        profile = self.get_object(request)
+        serializer = ProfileSerializer(
+            profile,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data)
+
+    def delete(self, request):
+        profile = self.get_object(request)
+        profile.user.delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
