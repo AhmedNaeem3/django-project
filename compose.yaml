@@ -1,9 +1,9 @@
 services:
   web:
     build: .
-    command: python manage.py runserver 0.0.0.0:8000
+    command:  ["/app/entry.sh", web]
     ports:
-      - "8000:8000"
+      - "${HOST_PORT}:${CONTAINER_PORT}"
     env_file: .env
     volumes:
       - .:/app
@@ -12,17 +12,38 @@ services:
 
   worker:
     build: .
-    command: celery -A config worker -l info
+    command: ["/app/entry.sh", worker]
     env_file: .env
     volumes:
       - .:/app
     depends_on:
       - redis
 
+  beat:
+    build: .
+    command: ["/app/entry.sh", beat]
+    env_file: .env
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
   redis:
     image: redis:7-alpine
     volumes:
       - redis_data:/data
+  
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT}:${POSTGRES_PORT}"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
 volumes:
   redis_data:
+  postgres_data:
