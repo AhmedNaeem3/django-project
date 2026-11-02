@@ -15,6 +15,7 @@ venv/
 # Local database
 db.sqlite3
 *.sqlite3
+db.sqlite3.backup
 
 # Django generated files
 staticfiles/
