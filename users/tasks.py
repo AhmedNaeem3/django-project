@@ -1,6 +1,10 @@
 from celery import shared_task
+from django.conf import settings
 from django.core.mail import send_mail
 from django.core.management import call_command
+from django.utils import timezone
+
+from .models import GoogleDriveOAuthState
 
 
 @shared_task
@@ -47,3 +51,10 @@ def send_drive_file_email(user_email, first_name, action, file_name):
 @shared_task
 def cleanup_expired_jwt_tokens():
     call_command("flushexpiredtokens")
+
+
+@shared_task
+def cleanup_expired_google_drive_oauth_states():
+    cutoff = timezone.now() - settings.GOOGLE_DRIVE_OAUTH_STATE_LIFETIME
+    deleted, _ = GoogleDriveOAuthState.objects.filter(created_at__lt=cutoff).delete()
+    return f"Deleted {deleted} expired Google Drive OAuth states"

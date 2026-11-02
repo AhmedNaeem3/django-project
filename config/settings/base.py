@@ -69,6 +69,7 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
+GOOGLE_DRIVE_OAUTH_STATE_LIFETIME = timedelta(hours=5)
 
 # Django Cache — Redis
 CACHES = {
@@ -87,6 +88,11 @@ CELERY_RESULT_BACKEND = os.environ.get(
 CELERY_BEAT_SCHEDULE = {
     "cleanup-expired-jwt-tokens-every-10-minutes": {
         "task": "users.tasks.cleanup_expired_jwt_tokens",
+        "schedule": crontab(minute="*/10"),
+        "options": {"expires": 540},
+    },
+    "cleanup-google-drive-oauth-states-every-10-minutes": {
+        "task": "users.tasks.cleanup_expired_google_drive_oauth_states",
         "schedule": crontab(minute="*/10"),
         "options": {"expires": 540},
     },
