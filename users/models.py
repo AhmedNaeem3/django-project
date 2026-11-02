@@ -1,3 +1,4 @@
+from sqlite3.dbapi2 import Timestamp
 from django.conf import settings
 from django.contrib.auth.models import (
     AbstractBaseUser,
@@ -51,12 +52,13 @@ class Profile(TimeStampedModel):
     bio = models.TextField(blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
     city = models.CharField(max_length=100, blank=True)
+    passwordless_login_enabled = models.BooleanField(default=False)
 
     def __str__(self):
         return f"Profile of {self.user.email}"
 
 
-class GoogleDriveConnection(models.Model):
+class GoogleDriveConnection(TimeStampedModel):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -65,14 +67,12 @@ class GoogleDriveConnection(models.Model):
     access_token = models.TextField()
     refresh_token = models.TextField(blank=True, default="")
     token_expiry = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Google Drive connection for {self.user.email}"
 
 
-class GoogleDriveOAuthState(models.Model):
+class GoogleDriveOAuthState(TimeStampedModel):
     state = models.CharField(max_length=255, unique=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -80,7 +80,18 @@ class GoogleDriveOAuthState(models.Model):
         related_name="google_drive_oauth_states",
     )
     code_verifier = models.CharField(max_length=128)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"Google Drive OAuth state for {self.user.email}"
+
+
+class PasswordlessLoginToken(TimeStampedModel):
+    token = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="passwordless_login_tokens",
+    )
+
+    def __str__(self):
+        return f"Passwordless login token for {self.user.email}"

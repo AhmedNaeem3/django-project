@@ -71,6 +71,8 @@ SIMPLE_JWT = {
 
 GOOGLE_DRIVE_OAUTH_STATE_LIFETIME = timedelta(hours=5)
 
+PASSWORDLESS_LOGIN_TOKEN_LIFETIME = timedelta(minutes=15)
+
 # Django Cache — Redis
 CACHES = {
     "default": {
@@ -93,6 +95,11 @@ CELERY_BEAT_SCHEDULE = {
     },
     "cleanup-google-drive-oauth-states-every-10-minutes": {
         "task": "users.tasks.cleanup_expired_google_drive_oauth_states",
+        "schedule": crontab(minute="*/10"),
+        "options": {"expires": 540},
+    },
+    "cleanup-passwordless-login-tokens-every-10-minutes": {
+        "task": "users.tasks.cleanup_expired_passwordless_login_tokens",
         "schedule": crontab(minute="*/10"),
         "options": {"expires": 540},
     },
