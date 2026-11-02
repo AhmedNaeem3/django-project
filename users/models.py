@@ -70,3 +70,17 @@ class GoogleDriveConnection(models.Model):
 
     def __str__(self):
         return f"Google Drive connection for {self.user.email}"
+
+
+class GoogleDriveOAuthState(models.Model):
+    state = models.CharField(max_length=255, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="google_drive_oauth_states",
+    )
+    code_verifier = models.CharField(max_length=128)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Google Drive OAuth state for {self.user.email}"
