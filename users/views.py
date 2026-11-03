@@ -1,5 +1,7 @@
 import io
 from django.contrib.auth import authenticate
+from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.generics import CreateAPIView
@@ -9,9 +11,11 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
-from .models import Profile
+from .models import PasswordlessLoginToken, Profile, User
 from .serializers import (
+    GoogleDriveCallbackSerializer,
     LoginSerializer,
+    PasswordlessLoginVerifySerializer,
     ProfileSerializer,
     UserRegistrationSerializer,
     UserSerializer,
@@ -21,11 +25,19 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload
 from oauthlib.oauth2.rfc6749.errors import OAuth2Error
 from users.models import GoogleDriveConnection, GoogleDriveOAuthState
-from django.conf import settings
-from django.http import FileResponse, HttpResponse
-from django.utils import timezone
-from .google_drive import build_drive_flow, build_drive_service, save_credentials
-from .tasks import send_drive_file_email
+from django.http import FileResponse
+from .google_drive import GoogleDriveClient
+from .tasks import send_drive_file_email, send_passwordless_login_email
+
+
+def get_login_data(user):
+    refresh = RefreshToken.for_user(user)
+
+    return {
+        "refresh": str(refresh),
+        "access": str(refresh.access_token),
+        "user": UserSerializer(user).data,
+    }
 
 
 class UserRegistrationView(CreateAPIView):
@@ -42,11 +54,13 @@ class LoginAPIView(APIView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        user = authenticate(
-            request,
-            email=serializer.validated_data["email"],
-            password=serializer.validated_data["password"],
-        )
+        email = serializer.validated_data["email"]
+        password = serializer.validated_data.get("password")
+
+        if password is None:
+            return self.send_passwordless_login_link(request, email)
+
+        user = authenticate(request, email=email, password=password)
 
         if user is None:
             return Response(
@@ -54,14 +68,57 @@ class LoginAPIView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        refresh = RefreshToken.for_user(user)
+        return Response(get_login_data(user), status=status.HTTP_200_OK)
+
+    def send_passwordless_login_link(self, request, email):
+        user = User.objects.filter(
+            email__iexact=email,
+            is_active=True,
+            passwordless_login=True,
+        ).first()
+
+        if user is None:
+            return Response(
+                {
+                    "error": "Passwordless login is not enabled for this account. "
+                    "Enable it in your profile or log in with your password."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        PasswordlessLoginToken.objects.filter(
+            user=user,
+            used_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        ).update(expires_at=timezone.now())
+
+        login_token = PasswordlessLoginToken.objects.create(user=user)
+        login_url = request.build_absolute_uri(
+            f"{reverse('passwordless_login_verify')}?token={login_token.token}"
+        )
+
+        send_passwordless_login_email.delay(user.email, user.first_name, login_url)
 
         return Response(
-            {
-                "refresh": str(refresh),
-                "access": str(refresh.access_token),
-                "user": UserSerializer(user).data,
-            },
+            {"message": "We have sent a login link to your email."},
+            status=status.HTTP_200_OK,                                               
+        )
+
+
+class PasswordlessLoginVerifyAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        serializer = PasswordlessLoginVerifySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+
+        login_token = serializer.validated_data["token"]
+        login_token.used_at = timezone.now()
+        login_token.save()
+
+        return Response(
+            {"message": "You are logged in.", **get_login_data(login_token.user)},
             status=status.HTTP_200_OK,
         )
 
@@ -151,46 +208,40 @@ class ProfileAPIView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-def google_drive_callback(request):
-    oauth_state = GoogleDriveOAuthState.objects.filter(
-        state=request.GET.get("state"),
-        created_at__gte=timezone.now() - settings.GOOGLE_DRIVE_OAUTH_STATE_LIFETIME,
-    ).first()
+class GoogleDriveCallbackAPIView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
 
-    if oauth_state is None:
-        return HttpResponse(
-            "Invalid or expired OAuth state. Start again.",
-            status=400,
+    def get(self, request):
+        serializer = GoogleDriveCallbackSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+
+        oauth_state = serializer.validated_data["state"]
+        oauth_state.delete()
+
+        flow = GoogleDriveClient.build_flow(code_verifier=oauth_state.code_verifier)
+
+        try:
+            flow.fetch_token(code=serializer.validated_data["code"])
+        except (GoogleAuthError, OAuth2Error, ValueError):
+            return Response(
+                {"error": "Google Drive connection failed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        connection, _ = GoogleDriveConnection.objects.get_or_create(
+            user_id=oauth_state.user_id,
         )
+        GoogleDriveClient(connection).save_credentials(flow.credentials)
 
-    oauth_state.delete()
-
-    flow = build_drive_flow(
-        state=oauth_state.state,
-        code_verifier=oauth_state.code_verifier,
-    )
-
-    try:
-        flow.fetch_token(authorization_response=request.build_absolute_uri())
-    except (GoogleAuthError, OAuth2Error, ValueError):
-        return HttpResponse(
-            "Google Drive connection failed.",
-            status=400,
-        )
-
-    connection, _ = GoogleDriveConnection.objects.get_or_create(
-        user_id=oauth_state.user_id,
-    )
-    save_credentials(connection, flow.credentials)
-
-    return HttpResponse("Google Drive connected successfully.")
+        return Response({"message": "Google Drive connected successfully."})
 
 
 class GoogleDriveConnectAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        flow = build_drive_flow()
+        flow = GoogleDriveClient.build_flow()
 
         authorization_url, state = flow.authorization_url(
             access_type="offline",
@@ -218,7 +269,7 @@ class GoogleDriveAPIView(APIView):
         except GoogleDriveConnection.DoesNotExist:
             raise NotFound({"error": "Google Drive is not connected."})
 
-        return build_drive_service(connection)
+        return GoogleDriveClient(connection).build_service()
 
     def get_upload_media(self, request):
         uploaded_file = request.FILES.get("file")
@@ -256,11 +307,15 @@ class GoogleDriveFilesAPIView(GoogleDriveAPIView):
     def get(self, request):
         service = self.get_drive_service(request)
 
-        result = service.files().list(
-            q="trashed = false",
-            fields="files(id, name, mimeType, size, modifiedTime)",
-            pageSize=100,
-        ).execute()
+        result = (
+            service.files()
+            .list(
+                q="trashed = false",
+                fields="files(id, name, mimeType, size, modifiedTime)",
+                pageSize=100,
+            )
+            .execute()
+        )
 
         return Response(result.get("files", []))
 
@@ -268,11 +323,15 @@ class GoogleDriveFilesAPIView(GoogleDriveAPIView):
         media = self.get_upload_media(request)
         service = self.get_drive_service(request)
 
-        drive_file = service.files().create(
-            body={"name": request.FILES["file"].name},
-            media_body=media,
-            fields="id, name, mimeType, size, modifiedTime",
-        ).execute()
+        drive_file = (
+            service.files()
+            .create(
+                body={"name": request.FILES["file"].name},
+                media_body=media,
+                fields="id, name, mimeType, size, modifiedTime",
+            )
+            .execute()
+        )
 
         self.send_file_email(request, "uploaded", drive_file["name"])
 
@@ -283,10 +342,14 @@ class GoogleDriveFileDetailAPIView(GoogleDriveAPIView):
     def get(self, request, file_id):
         service = self.get_drive_service(request)
 
-        drive_file = service.files().get(
-            fileId=file_id,
-            fields="name, mimeType",
-        ).execute()
+        drive_file = (
+            service.files()
+            .get(
+                fileId=file_id,
+                fields="name, mimeType",
+            )
+            .execute()
+        )
         content = service.files().get_media(fileId=file_id).execute()
 
         return FileResponse(
@@ -320,11 +383,15 @@ class GoogleDriveFileDetailAPIView(GoogleDriveAPIView):
                 resumable=True,
             )
 
-        drive_file = service.files().update(
-            fileId=file_id,
-            media_body=media,
-            fields="id, name, mimeType, size, modifiedTime",
-        ).execute()
+        drive_file = (
+            service.files()
+            .update(
+                fileId=file_id,
+                media_body=media,
+                fields="id, name, mimeType, size, modifiedTime",
+            )
+            .execute()
+        )
 
         self.send_file_email(request, "updated", drive_file["name"])
 

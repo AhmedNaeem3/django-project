@@ -71,6 +71,8 @@ SIMPLE_JWT = {
 
 GOOGLE_DRIVE_OAUTH_STATE_LIFETIME = timedelta(hours=5)
 
+PASSWORDLESS_LOGIN_TOKEN_LIFETIME = timedelta(minutes=15)
+
 # Django Cache — Redis
 CACHES = {
     "default": {

@@ -1,3 +1,6 @@
+from sqlite3.dbapi2 import Timestamp
+import uuid
+
 from django.conf import settings
 from django.contrib.auth.models import (
     AbstractBaseUser,
@@ -6,6 +9,7 @@ from django.contrib.auth.models import (
 from django.core.validators import RegexValidator
 from users.utils.user_manager import UserManager
 from django.db import models
+from django.utils import timezone
 
 
 class TimeStampedModel(models.Model):
@@ -22,6 +26,7 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     last_name = models.CharField(max_length=150)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+    passwordless_login = models.BooleanField(default=False)
 
     objects = UserManager()
 
@@ -56,7 +61,7 @@ class Profile(TimeStampedModel):
         return f"Profile of {self.user.email}"
 
 
-class GoogleDriveConnection(models.Model):
+class GoogleDriveConnection(TimeStampedModel):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -65,14 +70,12 @@ class GoogleDriveConnection(models.Model):
     access_token = models.TextField()
     refresh_token = models.TextField(blank=True, default="")
     token_expiry = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Google Drive connection for {self.user.email}"
 
 
-class GoogleDriveOAuthState(models.Model):
+class GoogleDriveOAuthState(TimeStampedModel):
     state = models.CharField(max_length=255, unique=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -80,7 +83,24 @@ class GoogleDriveOAuthState(models.Model):
         related_name="google_drive_oauth_states",
     )
     code_verifier = models.CharField(max_length=128)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"Google Drive OAuth state for {self.user.email}"
+
+
+def default_expiry():
+    return timezone.now() + settings.PASSWORDLESS_LOGIN_TOKEN_LIFETIME
+
+
+class PasswordlessLoginToken(TimeStampedModel):
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="passwordless_login_tokens",
+    )
+    expires_at = models.DateTimeField(default=default_expiry)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Passwordless login token for {self.user.email}"

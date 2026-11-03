@@ -4,9 +4,10 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     LoginAPIView,
     LogoutAPIView,
+    PasswordlessLoginVerifyAPIView,
     ProfileAPIView,
     UserRegistrationView,
-    google_drive_callback,
+    GoogleDriveCallbackAPIView,
     GoogleDriveConnectAPIView,
     GoogleDriveFileDetailAPIView,
     GoogleDriveFilesAPIView,
@@ -15,12 +16,17 @@ from .views import (
 urlpatterns = [
     path("register/", UserRegistrationView.as_view(), name="register"),
     path("login/", LoginAPIView.as_view(), name="login"),
+    path(
+        "login/passwordless/verify/",
+        PasswordlessLoginVerifyAPIView.as_view(),
+        name="passwordless_login_verify",
+    ),
     path("token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("logout/", LogoutAPIView.as_view(), name="logout"),
     path("profile/", ProfileAPIView.as_view(), name="profile"),
     path(
         "google-drive/callback/",
-        google_drive_callback,
+        GoogleDriveCallbackAPIView.as_view(),
         name="google_drive_callback",
     ),
     path(
