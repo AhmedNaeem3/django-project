@@ -5,7 +5,7 @@ from django.core.management import call_command
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import GoogleDriveOAuthState, PasswordlessLoginToken
+from .models import GoogleDriveOAuthState
 
 
 @shared_task
@@ -96,8 +96,3 @@ def cleanup_expired_google_drive_oauth_states():
     cutoff = timezone.now() - settings.GOOGLE_DRIVE_OAUTH_STATE_LIFETIME
     GoogleDriveOAuthState.objects.filter(created_at__lt=cutoff).delete()
 
-
-@shared_task
-def cleanup_expired_passwordless_login_tokens():
-    cutoff = timezone.now() - settings.PASSWORDLESS_LOGIN_TOKEN_LIFETIME
-    PasswordlessLoginToken.objects.filter(created_at__lt=cutoff).delete()

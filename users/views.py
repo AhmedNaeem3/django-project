@@ -1,7 +1,7 @@
 import io
-import secrets
 from django.contrib.auth import authenticate
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.generics import CreateAPIView
@@ -74,7 +74,7 @@ class LoginAPIView(APIView):
         user = User.objects.filter(
             email__iexact=email,
             is_active=True,
-            profile__passwordless_login_enabled=True,
+            passwordless_login=True,
         ).first()
 
         if user is None:
@@ -86,11 +86,13 @@ class LoginAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        PasswordlessLoginToken.objects.filter(user=user).delete()
-        login_token = PasswordlessLoginToken.objects.create(
+        PasswordlessLoginToken.objects.filter(
             user=user,
-            token=secrets.token_urlsafe(32),
-        )
+            used_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        ).update(expires_at=timezone.now())
+
+        login_token = PasswordlessLoginToken.objects.create(user=user)
         login_url = request.build_absolute_uri(
             f"{reverse('passwordless_login_verify')}?token={login_token.token}"
         )
@@ -99,7 +101,7 @@ class LoginAPIView(APIView):
 
         return Response(
             {"message": "We have sent a login link to your email."},
-            status=status.HTTP_200_OK,
+            status=status.HTTP_200_OK,                                               
         )
 
 
@@ -112,11 +114,11 @@ class PasswordlessLoginVerifyAPIView(APIView):
         serializer.is_valid(raise_exception=True)
 
         login_token = serializer.validated_data["token"]
-        user = login_token.user
-        login_token.delete()
+        login_token.used_at = timezone.now()
+        login_token.save()
 
         return Response(
-            {"message": "You are logged in.", **get_login_data(user)},
+            {"message": "You are logged in.", **get_login_data(login_token.user)},
             status=status.HTTP_200_OK,
         )
 

@@ -69,6 +69,10 @@ class LoginSerializer(serializers.Serializer):
 
 class ProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
+    passwordless_login = serializers.BooleanField(
+        source="user.passwordless_login",
+        required=False,
+    )
 
     class Meta:
         model = Profile
@@ -79,7 +83,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             "bio",
             "date_of_birth",
             "city",
-            "passwordless_login_enabled",
+            "passwordless_login",
             "created_at",
             "updated_at",
         ]
@@ -89,6 +93,15 @@ class ProfileSerializer(serializers.ModelSerializer):
         if value and value > date.today():
             raise serializers.ValidationError("Date of birth cannot be in the future.")
         return value
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop("user", {})
+
+        if "passwordless_login" in user_data:
+            instance.user.passwordless_login = user_data["passwordless_login"]
+            instance.user.save()
+
+        return super().update(instance, validated_data)
 
 
 class GoogleDriveCallbackSerializer(serializers.Serializer):
@@ -120,14 +133,15 @@ class GoogleDriveCallbackSerializer(serializers.Serializer):
 
 
 class PasswordlessLoginVerifySerializer(serializers.Serializer):
-    token = serializers.CharField(max_length=64)
+    token = serializers.UUIDField()
 
     def validate_token(self, value):
         login_token = PasswordlessLoginToken.objects.filter(
             token=value,
-            created_at__gte=timezone.now() - settings.PASSWORDLESS_LOGIN_TOKEN_LIFETIME,
+            used_at__isnull=True,
+            expires_at__gt=timezone.now(),
             user__is_active=True,
-            user__profile__passwordless_login_enabled=True,
+            user__passwordless_login=True,
         ).first()
 
         if login_token is None:

@@ -98,11 +98,6 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/10"),
         "options": {"expires": 540},
     },
-    "cleanup-passwordless-login-tokens-every-10-minutes": {
-        "task": "users.tasks.cleanup_expired_passwordless_login_tokens",
-        "schedule": crontab(minute="*/10"),
-        "options": {"expires": 540},
-    },
 }
 
 MIDDLEWARE = [
