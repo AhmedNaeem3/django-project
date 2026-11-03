@@ -20,9 +20,10 @@ from google.auth.exceptions import GoogleAuthError, RefreshError
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload
 from oauthlib.oauth2.rfc6749.errors import OAuth2Error
-from users.models import GoogleDriveConnection
-from django.core.cache import cache
+from users.models import GoogleDriveConnection, GoogleDriveOAuthState
+from django.conf import settings
 from django.http import FileResponse, HttpResponse
+from django.utils import timezone
 from .google_drive import build_drive_flow, build_drive_service, save_credentials
 from .tasks import send_drive_file_email
 
@@ -151,21 +152,22 @@ class ProfileAPIView(APIView):
 
 
 def google_drive_callback(request):
-    state = request.GET.get("state")
-    cache_key = f"google_drive_oauth:{state}"
-    oauth_data = cache.get(cache_key)
+    oauth_state = GoogleDriveOAuthState.objects.filter(
+        state=request.GET.get("state"),
+        created_at__gte=timezone.now() - settings.GOOGLE_DRIVE_OAUTH_STATE_LIFETIME,
+    ).first()
 
-    if oauth_data is None:
+    if oauth_state is None:
         return HttpResponse(
             "Invalid or expired OAuth state. Start again.",
             status=400,
         )
 
-    cache.delete(cache_key)
+    oauth_state.delete()
 
     flow = build_drive_flow(
-        state=state,
-        code_verifier=oauth_data["code_verifier"],
+        state=oauth_state.state,
+        code_verifier=oauth_state.code_verifier,
     )
 
     try:
@@ -177,7 +179,7 @@ def google_drive_callback(request):
         )
 
     connection, _ = GoogleDriveConnection.objects.get_or_create(
-        user_id=oauth_data["user_id"],
+        user_id=oauth_state.user_id,
     )
     save_credentials(connection, flow.credentials)
 
@@ -195,13 +197,10 @@ class GoogleDriveConnectAPIView(APIView):
             prompt="consent",
         )
 
-        cache.set(
-            f"google_drive_oauth:{state}",
-            {
-                "user_id": request.user.pk,
-                "code_verifier": flow.code_verifier,
-            },
-            timeout=600,
+        GoogleDriveOAuthState.objects.create(
+            state=state,
+            user=request.user,
+            code_verifier=flow.code_verifier,
         )
 
         return Response(
